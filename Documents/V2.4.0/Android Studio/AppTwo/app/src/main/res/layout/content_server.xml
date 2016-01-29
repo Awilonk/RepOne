@@ -19,5 +19,12 @@
 
         <TextView android:id="@+id/text_in" android:layout_width="wrap_content"
             android:layout_height="wrap_content" android:text="" android:layout_below="@+id/server_status"/>
-
+    <TextView
+        android:id="@+id/ConnectStatusTextView"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerInParent="true"
+        android:text=""
+        android:textColor="@android:color/white"
+        android:textSize="21sp" />
 </RelativeLayout>
