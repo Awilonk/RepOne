@@ -24,7 +24,7 @@ try {
 //	String addr = keys.nextLine(); // kysyy IP osoitetta
 
 	// Luo socketin
-	String addr = "10.20.208.48";
+	String addr = "10.20.202.242";
 	Socket socket = new Socket(addr, 8080); // Luo socketin
 	System.out.println("Connection Established");
 	BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -58,9 +58,20 @@ try {
 			InputStreamReader in_reader = new InputStreamReader(ins);
 			BufferedReader BR = new BufferedReader(in_reader);
 
-		// mikä viesti saatiin vastaukseksi 
-			String msg_got = BR.readLine();
-			System.out.println("Message received: "+ msg_got + "\n");
+		// mikä viesti saatiin vastaukseksi
+			StringBuilder sb = new StringBuilder();	
+			String msg_got; 
+//			System.out.println("Message received");
+			/*for (msg_got = BR.readLine();msg_got != null; msg_got = BR.readLine())
+			{
+			//	System.out.println("a");
+				sb.append(msg_got);
+				System.out.print(msg_got);	
+			}
+			BR.close();
+			*/
+			msg_got = BR.readLine();
+			System.out.println("Message received: "+ msg_got);
 		}
 
 		} catch (IOException e) {
