@@ -52,6 +52,7 @@ public class Tutorial extends Application{
         return (DJIAircraft) getProductInstance();
     }
 
+
     @Override
     public void onCreate() {
         super.onCreate();
