@@ -23,7 +23,9 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -145,10 +147,10 @@ public class ServerActivity extends Activity {
     }
 
 
-
     public class serverthread implements Runnable {
-        public void run(){
+        public void run() {
             try {
+                Socket socket = null;
                 if (server_ip != null) {
                     handler.post(new Runnable() {
                         @Override
@@ -157,111 +159,58 @@ public class ServerActivity extends Activity {
                         }
                     });
                     serversocket = new ServerSocket(server_port);
-                    while (true) {
-                        Socket client = serversocket.accept(); // checks for the client
-                        handler.post(new Runnable() {
-                            @Override
-                            public void run() {
-                                serverStatus.append("\n" + "Connected to Client");
-//                                drone_con = DJIDrone.connectToDrone();
-                                // the BaseProduct instance
-                                // null if no drone is present or SDKinstanceManager failed
-                                mProduct = Tutorial.getProductInstance();
-                                if (mProduct == null) {
-                                    drone_con = false;
-                                } else {
-                                    drone_con = mProduct.isConnected();
-                                }
-                                if (drone_con) {
-                                    serverStatus.append("\n" + "Connection to Drone: True");
-                                } else {
-                                    serverStatus.append("\n" + "Connection to drone: False");
-                                }
-                                Log.e(TAG, "Connection to the Drone = "+drone_con);
 
-                            }
-                        });
-                        // wait fot a message fro ma client
+                    while (!Thread.currentThread().isInterrupted()) {
                         try {
-                            BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream()));
-                            final PrintWriter out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(client.getOutputStream())), true);
-                            String line = null;
-                            while ((line = in.readLine()) != null) {
-                                Log.d("Server activity", line);
-                                final List<String> moveData = new ArrayList<String>(Arrays.asList(line.split(" ")));
-                                int A = 0;
-                                if (line.equals("e"))
-                                {
-                                    text_in.append("Client Disconnected\n");
-                                    break;
-                                }
-                                else {
-                                    final String msg = line;
-                                    final String msg_sent = line + " on aasi";
-                                    //final int finalA = A;
-                                    final String finalLine = line;
-                                    handler.post(new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            // viestien ja komentojen edelleen lähetys
-                                            // ja muut toiminnalisuudet
-                                            //
-                                            parser(finalLine, out);
-                                            /*
-                                            if (moveData.get(0).equals("move")) {
-                                                // moves the drone in a direction
-                                                sendflightdata(moveData, out);
-                                            } else if (moveData.get(0).equals("takeoff")) {
-                                                // drone turns the motors on and takes off
-                                                //takeoff(out);
-                                            } else if (moveData.get(0).equals("land")) {
-                                                landing(out);
-                                            } else if (moveData.get(0).equals("here")) {
-                                                //waypoint(moveData , out);
-                                            } else if (moveData.get(0).equals("pos")){
-                                                position(out);
-                                            } else {
-                                                text_in.append("Client Sent: " + msg + "\n");
-                                                //text_in.append("Sent To Client: " + msg_sent + "\n");
-                                                //out.println(msg_sent);
-                                            } */
-                                        }
-
-                                    });
-
-                                }
-
-                            }
-                            break;
-                        } catch (Exception e) {
-                            handler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    serverStatus.setText("Connection interrupted");
-                                }
-                            });
+                            Socket client = serversocket.accept(); // checks for the client
+                            CommunicationThread commsthread = new CommunicationThread(client);
+                            new Thread(commsthread).start();
+                        } catch (IOException e) {
                             e.printStackTrace();
                         }
                     }
-                } else {
-                    handler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            serverStatus.setText("No internet connection detected");
-                        }
-                    });
                 }
-            } catch (IOException e) {
-                handler.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        serverStatus.setText("Error");
-                    }
-                });
+            } catch (IOException e){
                 e.printStackTrace();
             }
         }
     }
+
+
+
+    class CommunicationThread implements Runnable {
+    // reference : https://examples.javacodegeeks.com/android/core/socket-core/android-socket-example/
+    // (7.3.2016)
+
+        private Socket clientSocket;
+        private BufferedReader input;
+        private PrintWriter out;
+        public CommunicationThread(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+            try {
+
+                this.input = new BufferedReader(new InputStreamReader(this.clientSocket.getInputStream()));
+                this.out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(this.clientSocket.getOutputStream())), true);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        public void run() {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    String read = input.readLine();
+                    //updateConversationHandler.post(new updateUIThread(read));
+                    parser(read, out);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+    }
+
+
+
 
     private String getIP() {
         //Gets the device wifi address
@@ -331,7 +280,7 @@ public class ServerActivity extends Activity {
             //String lati = String.valueOf(posit.getLatitude());
             //String longi = String.valueOf(posit.getLongitude());
             String alti = String.valueOf(posit.getAltitude());
-            String coords = from_latlon(posit.getLatitude(),posit.getLongitude());
+            String coords = from_latlon(posit.getLatitude(), posit.getLongitude());
 
             //String msg = "Latitude:"+lati+" Longitude:"+longi+" Altitude:"+alti;
             //out.println(msg);
