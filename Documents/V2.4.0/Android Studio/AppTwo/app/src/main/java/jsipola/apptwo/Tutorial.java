@@ -14,6 +14,7 @@ import dji.sdk.base.DJIBaseComponent.DJIComponentListener;
 import dji.sdk.base.DJIBaseProduct;
 import dji.sdk.base.DJIBaseProduct.DJIBaseProductListener;
 import dji.sdk.base.DJIBaseProduct.DJIComponentKey;
+import dji.sdk.base.DJIError;
 import dji.sdk.base.DJISDKError;
 
 /**
@@ -68,7 +69,7 @@ public class Tutorial extends Application{
     private DJISDKManager.DJISDKManagerCallback mDJISDKManagerCallback = new DJISDKManager.DJISDKManagerCallback() {
 
         //Listens to the SDK registration result
-        @Override
+        //@Override
         public void onGetRegisteredResult(DJISDKError error) {
             if(error == DJISDKError.REGISTRATION_SUCCESS) {
                 //DJISDKManager.getInstance().startConnectionToProduct();
@@ -86,6 +87,15 @@ public class Tutorial extends Application{
 
             }
             Log.e("TAG", error.getDescription());
+        }
+
+        @Override
+        public void onGetRegisteredResult(DJIError djiError) {
+            if (djiError == DJISDKError.REGISTRATION_SUCCESS){
+                DJISDKManager.getInstance().startConnectionToProduct();
+            } else {
+                Log.e(TAG, "Connection failed");
+            }
         }
 
         //Listens to the connected product changing, including two parts, component changing or product connection changing.

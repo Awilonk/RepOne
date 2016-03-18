@@ -29,6 +29,7 @@ import java.io.PrintStream;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -36,8 +37,10 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
+import java.util.Queue;
 import java.util.SortedSet;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 
 import dji.sdk.AirLink.DJIAirLink;
@@ -85,8 +88,20 @@ public class ServerActivity extends Activity {
     private ServerSocket serversocket; // creates a new serversocket
     private String msg1 = "null";
     private Map<String, String> Waymap = new HashMap<String, String>();
-    private double home_x,home_y;
+    private volatile double target_x = 0,target_y = 0;
     //private Map<Integer, String> ZONE_LETTERS = new HashMap<Integer, String>();
+
+    private ArrayList<CommunicationThread> clients;
+    boolean flag = false;
+    volatile boolean flag_pos = false;
+    volatile boolean flag_running = false;
+
+    // command buffer
+    volatile ConcurrentLinkedQueue<String> que = new ConcurrentLinkedQueue();
+
+    // msg buffer
+    volatile ConcurrentLinkedQueue<String> que_com = new ConcurrentLinkedQueue();
+
 
     private double K0 = 0.9996;
     private double E = 0.00669438;
@@ -139,10 +154,14 @@ public class ServerActivity extends Activity {
         filter.addAction(Tutorial.FLAG_CONNECTION_CHANGE);
         registerReceiver(mReceiver, filter);
 
-
-
         Thread thread = new Thread(new serverthread());
         thread.start();
+
+        Thread thread_buffer = new Thread(new BufferThread(que, que_com/*, flag_pos*/));
+        thread_buffer.start();
+
+        Thread thread_process = new Thread(new processLine(que, que_com));
+        thread_process.start();
 
     }
 
@@ -150,8 +169,8 @@ public class ServerActivity extends Activity {
     public class serverthread implements Runnable {
         public void run() {
             try {
-                Socket socket = null;
-                if (server_ip != null) {
+                clients = new ArrayList<CommunicationThread>();
+                                if (server_ip != null) {
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
@@ -162,9 +181,16 @@ public class ServerActivity extends Activity {
 
                     while (!Thread.currentThread().isInterrupted()) {
                         try {
-                            Socket client = serversocket.accept(); // checks for the client
-                            CommunicationThread commsthread = new CommunicationThread(client);
+                            final Socket client = serversocket.accept();
+                            CommunicationThread commsthread = new CommunicationThread(client, que, que_com);
+                            clients.add(commsthread);
                             new Thread(commsthread).start();
+                            handler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    text_in.append("Connected to: " + client.getInetAddress() +"\n");
+                                }
+                            });
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
@@ -176,40 +202,275 @@ public class ServerActivity extends Activity {
         }
     }
 
+    class processLine implements Runnable {
+        ConcurrentLinkedQueue<String> que;
+        ConcurrentLinkedQueue<String> que_com;
+        public processLine(ConcurrentLinkedQueue<String> que,ConcurrentLinkedQueue<String> que_com) {
+            this.que = que;
+            this.que_com = que_com;
+        }
+        @Override
+        public void run() {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    if (flag_running == true) {
+                        checkManualCoor(target_x, target_y);
+                    } else {
+                        String s = null;
+                        parserReal(s);
+                    }
+                }
+            } catch (Exception e) {
+                sendall(e.getMessage());
+            }
+        }
 
+        private void parserReal(final String line_old/*, final PrintWriter out*/){
+        /*Parses the incoming message and executes the necessary actions*/
+            try {
+                if (que.isEmpty() || flag_running) { // && !flag_pos
+                    return ;
+                } else {
+                    String line = que.poll();
+                    final List<String> comms = new ArrayList<String>(Arrays.asList(line.split(";")));
+
+                    for (int i = 0; i < comms.size(); i++) {
+                        String val = comms.get(i);
+
+                        //out.println(val);
+
+                        // splits the line by .
+                        List<String> vallist = new ArrayList<String>(Arrays.asList(val.split("\\.")));
+                        // splits the line by " " so we get the parametres
+                        List<String> vallist_com = new ArrayList<String>(Arrays.asList(val.split(" ")));
+
+                        if (vallist.get(0).equals("base")) {
+                            msg1 = msg1 + "\n" + dobasestuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("targets")) {
+                            msg1 = msg1 + "\n" + dotargetstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("camera")) {
+                            msg1 = msg1 + "\n" + docamerastuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("sensors")) {
+                            msg1 = msg1 + "\n" + dosensorstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("actuators")) {
+                            msg1 = msg1 + "\n" + doactuatorstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("operator")) {
+                            msg1 = msg1 + "\n" + doaoperatorstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("airlink")) {
+                            msg1 = msg1 + "\n" + doairlinkstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("moveto") || vallist_com.get(0).equals("moveto")) {
+                            flag_running = true; // true
+                            msg1 = msg1 + "\n" + domovestuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("battery")) {
+                            msg1 = msg1 + "\n" + dobatterystuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("scripts")) {
+                            msg1 = msg1 + "\n" + doscriptsstuff(vallist, vallist_com);
+                        } else if (vallist.get(0).equals("pos")) {
+                            msg1 = msg1 + "\n" + doposstuff(vallist, vallist_com);
+                        } else {
+                            msg1 = msg1 + "\n" + "command not recognised";
+                        }
+                        try {
+                            Thread.sleep(1500); // 1000
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    //msg1 = msg1 +"\n" + from_latlon(64.86741742, 25.02979013); //
+                    //msg1 = msg1 + "\n"+ to_latlon(406643.0001527777, 7195132.001421091, 35, "W", null);
+                    if (msg1.substring(0, 4).equals("null")) {                   //65.0123600,  25.4681600
+                        msg1 = msg1.substring(5);
+                        Log.e(TAG, msg1);
+                        que_com.add(msg1);
+//                String r = "";
+//                r = que_com.poll();
+//                sendall(r);
+                        //out.println(msg1);
+                        msg1 = "null";
+                    } else {
+                        //out.println(msg1);
+                        que_com.add(msg1);
+//                String r = "";
+//                r = que_com.poll();
+//                sendall(r);
+                        msg1 = "null";
+                    }
+                }
+            } catch (Exception e) {
+                //out.println(e.toString());
+            }
+        }
+        private void checkManualCoor(double lat_tar,double lon_tar){
+            String current_pos = position();
+            List<String> coords = new ArrayList<String>(Arrays.asList(current_pos.split(" ")));
+            //sendall(String.valueOf(coords));
+            double current_lat = Double.parseDouble(coords.get(0));
+            double current_lon = Double.parseDouble(coords.get(1));
+
+            double latitude_diff = Math.abs(lat_tar - current_lat);
+            double longitude_diff = Math.abs(lon_tar - current_lon);
+           // sendall(String.valueOf(latitude_diff) +" "+ String.valueOf(longitude_diff));
+            if ((latitude_diff < 0.5) && (longitude_diff < 0.5)) {
+                flag_running = false;
+                sendall("Waypoint reached");
+                target_x = 0;
+                target_y = 0;
+                try {
+                    Thread.sleep(5000); // 1000
+                } catch(InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            } else {
+                try {
+                    Thread.sleep(3000); // 1000
+                } catch(InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+    }
+
+
+    class BufferThread implements Runnable{
+
+        ConcurrentLinkedQueue<String> que;
+        ConcurrentLinkedQueue<String> que_com;
+        //volatile boolean flag_pos;
+        boolean flag_2 = false;
+
+        public BufferThread(ConcurrentLinkedQueue<String> que, ConcurrentLinkedQueue<String> que_com/*, boolean flag_pos*/) {
+            this.que = que;
+            this.que_com = que_com;
+        //    this.flag_pos = flag_pos;
+        }
+        @Override
+        public void run() {
+            try {
+                while (!Thread.currentThread().isInterrupted()) {
+                    final String s;
+                    /*
+                    if (!(que.isEmpty())) { // && !flag_pos
+                        s = que.poll();
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                text_in.append("Executing action! :" + s + "\n");
+                            }
+                        });
+//                    String[] words = {"moveto", "muuta", "jotakin"};
+//                    flag_2 = (Arrays.asList(words).contains(s.substring(0,6)));
+                        parser(s/*, out);
+                    }
+                    */
+                    if (!(que_com.isEmpty())) {
+                        String r = "";
+                        r = que_com.poll();
+                        sendall(r);
+                    }
+                    //if (flag_2){
+                    //    check_pos();
+                    //}
+                    //if (flag_pos) {
+                    //    check_pos();
+                    //check_pos2(target_x, target_y);
+                    //}
+                    //
+                }
+            } catch (Exception e) {
+                sendall(e.getMessage());
+            }
+
+        }
+    }
 
     class CommunicationThread implements Runnable {
     // reference : https://examples.javacodegeeks.com/android/core/socket-core/android-socket-example/
     // (7.3.2016)
-
+        private boolean connected = true;
         private Socket clientSocket;
         private BufferedReader input;
         private PrintWriter out;
-        public CommunicationThread(Socket clientSocket) {
+        ConcurrentLinkedQueue<String> que;
+        ConcurrentLinkedQueue<String> que_com;
+        public CommunicationThread(Socket clientSocket,ConcurrentLinkedQueue<String> que, ConcurrentLinkedQueue<String> que_com) {
             this.clientSocket = clientSocket;
+            this.que = que;
+            this.que_com = que_com;
             try {
-
                 this.input = new BufferedReader(new InputStreamReader(this.clientSocket.getInputStream()));
                 this.out = new PrintWriter(new BufferedWriter(new OutputStreamWriter(this.clientSocket.getOutputStream())), true);
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
-        public void run() {
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    String read = input.readLine();
-                    //updateConversationHandler.post(new updateUIThread(read));
-                    parser(read, out);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+        public void write(String line) {
+            try{
+                out.println(line);
+            }
+            catch(Exception e){
+                e.printStackTrace();
             }
         }
 
+        public void run() {
+            try {
+                while (connected) {
+                    try {
+                        String read = input.readLine();
+                        if (read.equals("quit")) {
+                            connected = false;
+                            handler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    text_in.append("Connected to: " + clientSocket.getInetAddress() + "\n");
+                                }
+                            });
+                        } else {
+                            //parser(read, out);
+                            combuffer(read, out);
+                            //String s = que.poll();
+                            //parser(s/*, out*/); //  HOX!!!
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        connected = false;
+                        sendall(e.getMessage());
+                    }
+                }
+            } finally {
+                try {
+                    input.close();
+                    out.close();
+//                    clientSocket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    sendall(e.getMessage());
+                }
+            }
+        }
     }
 
+    public void sendall(String msg_all){
+        for(CommunicationThread client : clients)
+            client.write(msg_all);
+    }
 
+    private void combuffer(String line, PrintWriter out) {
+        if (priority(line)) {
+            String s = position();
+            sendall(s);
+            //parser(line/*, out*/);
+        } else {
+            que.add(line);
+            Log.e(TAG, line);
+        }
+    }
+
+    public static boolean priority(String str)
+    {
+        String[] words = {"pos", "listen", "jotakinmuuta"};
+        return (Arrays.asList(words).contains(str));
+    }
 
 
     private String getIP() {
@@ -284,6 +545,7 @@ public class ServerActivity extends Activity {
 
             //String msg = "Latitude:"+lati+" Longitude:"+longi+" Altitude:"+alti;
             //out.println(msg);
+            //sendall(coords+" Altitude: "+alti);
             return coords+" Altitude: "+alti;
         } catch (Exception e){
             e.printStackTrace();
@@ -362,42 +624,55 @@ public class ServerActivity extends Activity {
     private void waypoint(final List<String> moveData/*, final PrintWriter out*/){
         // moves the aircraft to the target location
         // (targets.add <waypointname> <lati> <longi> <altitude>)
-        String home_coords = position();
-        List<String> coords_2 = new ArrayList<String>(Arrays.asList(home_coords.split(" ")));
-
-        Log.e(TAG, String.valueOf(moveData));
-        String waydata = Waymap.get(moveData.get(1));
-        List<String> coor_data = new ArrayList<String>(Arrays.asList(waydata.split(" ")));
-
-        Log.e(TAG, String.valueOf(coor_data));
-        final double lat = Double.parseDouble(coor_data.get(0)) + Double.parseDouble(coords_2.get(0));
-        final double lon = Double.parseDouble(coor_data.get(1)) + Double.parseDouble(coords_2.get(1));
-
-        String coord_glb = to_latlon(lat, lon, 35, "W", null);
-        List<String> coor_local = new ArrayList<String>(Arrays.asList(coord_glb.split(" ")));
-
-        final double lat_glb = Double.parseDouble(coor_local.get(0));
-        final double lon_glb = Double.parseDouble(coor_local.get(1));
-
-        float final_alti = Float.parseFloat(coor_data.get(2));
-        float first_alti = final_alti - 2;
-        if (final_alti - first_alti <= 2){
-            first_alti = final_alti + 2;
-        }
-
-        //Log.e(TAG, String.valueOf(lat));
-        DJIAircraft Air = Tutorial.getAircraftInstance();           // gets the aircraft instance
-        final DJIMissionManager mMan1 = Air.getMissionManager();    // null if aircraft not connectecd
         try {
+            String home_coords = position();
+            List<String> coords_2 = new ArrayList<String>(Arrays.asList(home_coords.split(" ")));
+
+            Log.e(TAG, String.valueOf(moveData));
+            Log.e(TAG, String.valueOf(coords_2));
+            String waydata = Waymap.get(moveData.get(1));
+            List<String> coor_data = new ArrayList<String>(Arrays.asList(waydata.split(" ")));
+
+            Log.e(TAG, String.valueOf(coor_data));
+            final double lat = Double.parseDouble(coor_data.get(0)) + Double.parseDouble(coords_2.get(0));
+            final double lon = Double.parseDouble(coor_data.get(1)) + Double.parseDouble(coords_2.get(1));
+
+            target_x = lat; // saves target coordinates
+            target_y = lon; // for later use
+
+            String zone = coords_2.get(2);
+            //sendall(String.valueOf(coords_2.get(3).length()));
+            int zone_num = Integer.parseInt(zone);
+            //String coord_glb = to_latlon(lat, lon, 35, "W", null);
+            String coord_glb = to_latlon(lat, lon, zone_num, coords_2.get(3), null);
+            //sendall(coord_glb);
+            List<String> coor_local = new ArrayList<String>(Arrays.asList(coord_glb.split(" ")));
+
+            final double lat_glb = Double.parseDouble(coor_local.get(0));
+            final double lon_glb = Double.parseDouble(coor_local.get(1));
+
+            float final_alti = Float.parseFloat(coor_data.get(2));
+            float first_alti = final_alti - 2;
+            if (final_alti - first_alti <= 2){
+                first_alti = final_alti + 2;
+            }
+
+            //Log.e(TAG, String.valueOf(lat));
+            DJIAircraft Air = Tutorial.getAircraftInstance();           // gets the aircraft instance
+            final DJIMissionManager mMan1 = Air.getMissionManager();    // null if aircraft not connectecd
+
             DJIWaypoint wp1, wp2 = null;
             //wp2 = moveData.get(1);
             wp1 = new DJIWaypoint(lat_glb, lon_glb, first_alti);
             wp2 = new DJIWaypoint(lat_glb, lon_glb, final_alti);
 
-            DJIWaypointMission mWay = new DJIWaypointMission();
+            mWay.removeAllWaypoints();
+            //final DJIWaypointMission mWay = new DJIWaypointMission();
             mWay.addWaypoint(wp1);
             mWay.addWaypoint(wp2);
-            DJIMission.DJIMissionProgressHandler handy = new DJIMission.DJIMissionProgressHandler() {
+            DJIBaseComponent.DJICompletionCallback mCall = mWay.mInternalCallback;
+
+            final DJIMission.DJIMissionProgressHandler handy = new DJIMission.DJIMissionProgressHandler() {
                 @Override
                 public void onProgress(DJIMission.DJIProgressType Upload, float v) {
 
@@ -406,23 +681,56 @@ public class ServerActivity extends Activity {
             mMan1.prepareMission(mWay, handy, new DJIBaseComponent.DJICompletionCallback() {
                 @Override
                 public void onResult(DJIError djiError) {
-                    //Log.e(TAG, djiError.getDescription());
                     mMan1.startMissionExecution(new DJIBaseComponent.DJICompletionCallback() {
                         @Override
                         public void onResult(DJIError djiError) {
-                            //Log.e(TAG, djiError.getDescription());
                         }
                     });
                 }
             });
-
-
+            mMan1.setMissionExecutionFinishedCallback(mCall);
         } catch (Exception e) {
-            //out.println("Problem executing mission");
+            sendall("Problem initiating mission");
+            sendall(e.getMessage());
+        }
+    }
+/*
+    private void check_pos() {
+        try {
+            DJIWaypointMission.DJIWaypointMissionStatus status = new DJIWaypointMission.DJIWaypointMissionStatus();
+            boolean flag_check = status.isWaypointReached();
+            sendall(String.valueOf(flag_check));
+            if (flag_check == true) {
+                //flag_pos = false;
+                target_x = 0;
+                target_y = 0;
+            }
+        } catch (Exception e) {
             e.printStackTrace();
         }
-        //out.println("WaypointMission executed");
     }
+
+    private void check_pos2(double lat_tar, double lon_tar){
+        String current_pos = position();
+        List<String> coords = new ArrayList<String>(Arrays.asList(current_pos.split(" ")));
+        sendall(String.valueOf(coords));
+        double current_lat = Double.parseDouble(coords.get(0));
+        double current_lon = Double.parseDouble(coords.get(1));
+
+        double latitude_diff = Math.abs(lat_tar - current_lat);
+        double longitude_diff = Math.abs(lon_tar - current_lon);
+        sendall(String.valueOf(latitude_diff) +" "+ String.valueOf(longitude_diff));
+        if ((latitude_diff < 0.5) && (longitude_diff < 0.5)) {
+            flag_pos = false;
+        } else {
+            try {
+                Thread.sleep(1500); // 1000
+            } catch(InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+*/
 
     private String getssid(){
         DJIBaseProduct mProd = Tutorial.getProductInstance();
@@ -443,7 +751,7 @@ public class ServerActivity extends Activity {
         return s;
     }
 
-    private void parser(final String line, final PrintWriter out){
+    private void parser(final String line/*, final PrintWriter out*/){
         /*Parses the incoming message and executes the necessary actions*/
         try {
             final List<String> comms = new ArrayList<String>(Arrays.asList(line.split(";")));
@@ -484,7 +792,7 @@ public class ServerActivity extends Activity {
                     msg1 = msg1 + "\n" + "command not recognised";
                 }
                 try {
-                    Thread.sleep(1000); // 1500
+                    Thread.sleep(1500); // 1000
                 } catch(InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -494,14 +802,22 @@ public class ServerActivity extends Activity {
             if (msg1.substring(0,4).equals("null")) {                   //65.0123600,  25.4681600
                 msg1 = msg1.substring(5);
                 Log.e(TAG, msg1);
-                out.println(msg1);
+                que_com.add(msg1);
+//                String r = "";
+//                r = que_com.poll();
+//                sendall(r);
+                //out.println(msg1);
                 msg1 = "null";
             } else {
-                out.println(msg1);
+                //out.println(msg1);
+                que_com.add(msg1);
+//                String r = "";
+//                r = que_com.poll();
+//                sendall(r);
                 msg1 = "null";
             }
         } catch (Exception e) {
-            out.println(e.toString());
+            //out.println(e.toString());
         }
     }
 
@@ -530,7 +846,8 @@ public class ServerActivity extends Activity {
             return "moveto <home>\nmoveto <x y z ...>\nmoveto@global <x y ..>\nmoveto@work <x y ..>\nmoveto.base <global / operator/...>\n";
         } else if (vallist_com.get(0).equals("moveto")) {
             waypoint(vallist_com);
-            return "Moving";
+            //check_pos(vallist_com);
+            return "Moving to waypoint";
         } else {
             return null;
         }

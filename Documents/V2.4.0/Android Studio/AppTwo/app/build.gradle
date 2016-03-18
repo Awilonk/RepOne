@@ -35,5 +35,5 @@ dependencies {
     compile 'com.android.support:design:22.2.1'
     compile 'com.android.support:appcompat-v7:22.2.0'
     // compile project(':DJI-SDK-LIB')
-    compile project(':dJISDKLIB')
+    compile project(':DJISDKLIB')
 }
