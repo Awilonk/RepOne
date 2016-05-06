@@ -25,7 +25,7 @@ public class Tutorial extends Application{
 
     private static final String TAG = Tutorial.class.getName();
 
-    public static final String FLAG_CONNECTION_CHANGE = "com_example_fpv_tutorial_connection_change";
+    public static final String FLAG_CONNECTION_CHANGE = "Connection changed";
 
     private static DJIBaseProduct mProduct;
 
