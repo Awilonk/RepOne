@@ -27,4 +27,17 @@
         android:text=""
         android:textColor="@android:color/white"
         android:textSize="21sp" />
+    <TextureView
+        android:id="@+id/video_previewer_surface"
+        android:layout_width="200sp"
+        android:layout_height="140sp"
+        android:layout_below="@id/server_status"
+        android:layout_gravity="center"
+        android:layout_centerHorizontal="true" />
+    <Button android:id="@+id/takeoff"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentRight="true"
+        android:text=""
+        android:textStyle="italic"/>
 </RelativeLayout>
